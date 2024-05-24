@@ -162,45 +162,48 @@ class Bottleneck(nn.Module):
 class ResNet(nn.Module):
     def __init__(
             self,
-            block: Type[Union[BasicBlock, Bottleneck]],
-            layers: List[int],
-            num_classes: int = 1000,
-            zero_init_residual: bool = False,
-            groups: int = 1,
-            width_per_group: int = 64,
-            replace_stride_with_dilation: Optional[List[bool]] = None,
-            norm_layer: Optional[Callable[..., nn.Module]] = None,
+            block: Type[Union[BasicBlock, Bottleneck]],  # 残差块类型，可以是BasicBlock或Bottleneck
+            layers: List[int],  # 每个残差层中残差块的重复次数
+            num_classes: int = 1000,  # 输出分类数，默认为1000
+            zero_init_residual: bool = False,  # 是否将残差分支的最后一个BN层初始化为0
+            groups: int = 1,  # 卷积层的组数
+            width_per_group: int = 64,  # 每组的宽度
+            replace_stride_with_dilation: Optional[List[bool]] = None,  # 是否用空洞卷积替换stride
+            norm_layer: Optional[Callable[..., nn.Module]] = None,  # 归一化层，默认为BatchNorm2d
     ) -> None:
-        super().__init__()
-        _log_api_usage_once(self)
-        if norm_layer is None:
+        super().__init__()  # 初始化父类nn.Module
+        _log_api_usage_once(self)  # 用于记录API使用情况，内部函数
+        if norm_layer is None:  # 如果没有指定norm_layer，则使用BatchNorm2d
             norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
+        self._norm_layer = norm_layer  # 保存归一化层
 
-        self.inplanes = 64
-        self.dilation = 1
-        if replace_stride_with_dilation is None:
+        self.inplanes = 64  # 初始通道数
+        self.dilation = 1  # 空洞卷积的膨胀率
+        if replace_stride_with_dilation is None:  # 如果没有指定replace_stride_with_dilation，则初始化为全False
             # each element in the tuple indicates if we should replace
             # the 2x2 stride with a dilated convolution instead
             replace_stride_with_dilation = [False, False, False]
-        if len(replace_stride_with_dilation) != 3:
+        if len(replace_stride_with_dilation) != 3:  # 如果replace_stride_with_dilation长度不是3，则抛出异常
             raise ValueError(
                 "replace_stride_with_dilation should be None "
                 f"or a 3-element tuple, got {replace_stride_with_dilation}"
             )
-        self.groups = groups
-        self.base_width = width_per_group
+        self.groups = groups  # 组数
+        self.base_width = width_per_group  # 每组宽度
+        # 定义第一个卷积层
         self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = norm_layer(self.inplanes)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.bn1 = norm_layer(self.inplanes)  # 定义第一个归一化层
+        self.relu = nn.ReLU(inplace=True)  # 定义ReLU激活层
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)  # 定义最大池化层
+        # 定义四个残差层
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))  # 定义自适应平均池化层
+        self.fc = nn.Linear(512 * block.expansion, num_classes)  # 定义全连接层
 
+        # 初始化卷积层和归一化层的权重和偏置
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
@@ -211,6 +214,9 @@ class ResNet(nn.Module):
         # Zero-initialize the last BN in each residual branch,
         # so that the residual branch starts with zeros, and each residual block behaves like an identity.
         # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
+
+        # 如果zero_init_residual参数为True，则循环遍历模型中的所有模块，并将Bottleneck残差块中的第三个批量归一化（Batch Normalization, BN）层的权重初始化为0，
+        # 以及将BasicBlock残差块中的第二个BN层的权重初始化为0。这样做是为了遵循原始的ResNet论文中的建议，以确保残差块在身份映射（identity mapping）时的路径上不会影响梯度流。
         if zero_init_residual:
             for m in self.modules():
                 if isinstance(m, Bottleneck):
@@ -218,65 +224,85 @@ class ResNet(nn.Module):
                 elif isinstance(m, BasicBlock):
                     nn.init.constant_(m.bn2.weight, 0)  # type: ignore[arg-type]
 
+
+    # _make_layer函数用于创建一个残差层，它由多个残差块组成。
+    # 入参：残差块类型（block），输出通道数（planes），残差块的数量（blocks），步长（stride），是否使用空洞卷积（dilate）。
     def _make_layer(
             self,
-            block: Type[Union[BasicBlock, Bottleneck]],
-            planes: int,
-            blocks: int,
-            stride: int = 1,
-            dilate: bool = False,
+            block: Type[Union[BasicBlock, Bottleneck]],  # 残差块类型，可以是BasicBlock或Bottleneck
+            planes: int,  # 该层残差块的输出通道数
+            blocks: int,  # 该层中残差块的数量
+            stride: int = 1,  # 第一个残差块的步长，用于下采样
+            dilate: bool = False,  # 是否使用空洞卷积（dilated convolution）
     ) -> nn.Sequential:
-        norm_layer = self._norm_layer
-        downsample = None
-        previous_dilation = self.dilation
-        if dilate:
+        norm_layer = self._norm_layer  # 获取归一化层，通常是BatchNorm2d
+        downsample = None  # 用于下采样的模块，默认为None
+        previous_dilation = self.dilation  # 保存当前的dilation，用于后续的残差块
+        if dilate:  # 如果dilate为True，则更新dilation
             self.dilation *= stride
             stride = 1
+        # 判断是否需要下采样，如果stride不为1或输入通道数不等于输出通道数的扩张，则需要下采样
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
-                norm_layer(planes * block.expansion),
+            downsample = nn.Sequential(  # 创建下采样模块
+                conv1x1(self.inplanes, planes * block.expansion, stride),  # 1x1卷积，用于调整通道数和下采样
+                norm_layer(planes * block.expansion),  # 对下采样的结果进行归一化
             )
 
-        layers = []
+        layers = []  # 创建一个列表，用于存储当前层的所有残差块
+        # 添加第一个残差块，可能包含下采样
         layers.append(
-            block(
-                self.inplanes, planes, stride, downsample, self.groups, self.base_width, previous_dilation, norm_layer
+            block(  # 创建残差块实例
+                self.inplanes,  # 输入通道数
+                planes,  # 输出通道数
+                stride,  # 步长
+                downsample,  # 下采样模块
+                self.groups,  # ParallelGroup卷积的组数
+                self.base_width,  # 每组的宽度
+                previous_dilation,  # 之前的dilation
+                norm_layer  # 归一化层
             )
         )
+        # 更新输入通道数，为下一个残差块做准备
         self.inplanes = planes * block.expansion
+        # 添加剩余的残差块，不包含下采样
         for _ in range(1, blocks):
             layers.append(
-                block(
-                    self.inplanes,
-                    planes,
-                    groups=self.groups,
-                    base_width=self.base_width,
-                    dilation=self.dilation,
-                    norm_layer=norm_layer,
+                block(  # 创建残差块实例
+                    self.inplanes,  # 输入通道数
+                    planes,  # 输出通道数
+                    groups=self.groups,  # ParallelGroup卷积的组数
+                    base_width=self.base_width,  # 每组的宽度
+                    dilation=self.dilation,  # 当前的dilation
+                    norm_layer=norm_layer  # 归一化层
                 )
             )
 
+        # 将所有残差块组合成一个nn.Sequential模块，方便前向传播
         return nn.Sequential(*layers)
 
+    # _forward_impl方法定义了模型的前向传播过程。
     def _forward_impl(self, x: Tensor) -> Tensor:
         # See note [TorchScript super()]
+
+        # 输入数据x首先通过第一个卷积层、批量归一化层、ReLU激活函数和最大池化层。
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
 
+        # 然后，数据通过四个残差层（layer1到layer4）。
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
 
+        # 最后，通过全局平均池化层、展平操作和全连接层得到最终的输出。
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.fc(x)
-
         return x
 
+    # forward方法简单地调用了_forward_impl方法，这是为了提供一种一致的方式来访问模型的前向传播逻辑，同时允许子类重写前向传播过程。
     def forward(self, x: Tensor) -> Tensor:
         return self._forward_impl(x)
 
@@ -289,13 +315,18 @@ def _resnet(
         progress: bool,
         **kwargs: Any,
 ) -> ResNet:
+    # 第一步调用ResNet生成模型
     model = ResNet(block, layers, **kwargs)
+    # 第二步判断是否有预训练，若有则调用load_state_dict_from_url函数：
+    # load_state_dict_from_url 函数是PyTorch框架的一部分，用于从互联网上加载预训练模型的权重。
+    # load_state_dict_from_url函数接受预训练权重的URL地址和一个模型实例，它会从给定的URL下载权重，并将其加载到模型中。
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls[arch], progress=progress)
         model.load_state_dict(state_dict)
     return model
 
 
+# 下面是resnet不同层数的几个版本，都是调用_resnet进行实现
 def resnet18(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
     r"""ResNet-18 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_.
