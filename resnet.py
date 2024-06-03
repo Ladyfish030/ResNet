@@ -33,74 +33,93 @@ model_urls = {
 }
 
 
+# 定义一个3x3的卷积层，可以指定输入和输出的通道数、步长、分组数和膨胀系数
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv2d:
-    """3x3 convolution with padding"""
+    # 使用3x3的卷积核，膨胀系数来控制 padding 的大小，这样可以保证卷积后图像的尺寸不变
     return nn.Conv2d(
-        in_planes,
-        out_planes,
-        kernel_size=3,
-        stride=stride,
-        padding=dilation,
-        groups=groups,
-        bias=False,
-        dilation=dilation,
+        in_planes,      # 输入通道数
+        out_planes,     # 输出通道数
+        kernel_size=3,  # 卷积核大小
+        stride=stride,  # 卷积步长
+        padding=dilation, # 使用膨胀系数来控制 padding 的大小
+        groups=groups,  # 分组卷积，默认为1不分组
+        bias=False,     # 不使用偏置
+        dilation=dilation, # 膨胀系数
     )
 
-
+# 定义一个1x1的卷积层，用于调整通道数
 def conv1x1(in_planes: int, out_planes: int, stride: int = 1) -> nn.Conv2d:
-    """1x1 convolution"""
+    # 使用1x1的卷积核，步长默认为1，不使用偏置
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
-
+# 定义一个基础块（BasicBlock），这是残差网络中的一个基础构建块
 class BasicBlock(nn.Module):
+    # 设置扩展因子，对于基本块来说，扩展因子为1
     expansion: int = 1
 
     def __init__(
             self,
-            inplanes: int,
-            planes: int,
-            stride: int = 1,
-            downsample: Optional[nn.Module] = None,
-            groups: int = 1,
-            base_width: int = 64,
-            dilation: int = 1,
-            norm_layer: Optional[Callable[..., nn.Module]] = None,
+            inplanes: int,    # 输入通道数
+            planes: int,      # 输出通道数
+            stride: int = 1,  # 步长
+            downsample: Optional[nn.Module] = None, # 下采样模块，用于匹配输入输出的尺寸
+            groups: int = 1,  # 分组数
+            base_width: int = 64, # 基础宽度，用于计算输出通道数
+            dilation: int = 1, # 膨胀系数
+            norm_layer: Optional[Callable[..., nn.Module]] = None, # 归一化层，默认为BatchNorm2d
     ) -> None:
         super().__init__()
+        # 如果没有指定归一化层，则使用BatchNorm2d
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
+        # BasicBlock只支持groups=1和base_width=64
         if groups != 1 or base_width != 64:
             raise ValueError("BasicBlock only supports groups=1 and base_width=64")
+        # BasicBlock不支持膨胀系数大于1
         if dilation > 1:
             raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
-        # Both self.conv1 and self.downsample layers downsample the input when stride != 1
+        # 定义第一个卷积层，步长和膨胀系数会影响输出尺寸
         self.conv1 = conv3x3(inplanes, planes, stride)
+        # 定义归一化层
         self.bn1 = norm_layer(planes)
+        # 定义ReLU激活函数，inplace=True表示直接修改输入数据，节省内存
         self.relu = nn.ReLU(inplace=True)
+        # 定义第二个卷积层，不改变输出尺寸
         self.conv2 = conv3x3(planes, planes)
+        # 定义第二个归一化层
         self.bn2 = norm_layer(planes)
+        # 下采样模块，用于匹配输入输出的尺寸
         self.downsample = downsample
+        # 步长，用于后续计算
         self.stride = stride
 
+    # 前向传播过程
     def forward(self, x: Tensor) -> Tensor:
+        # 保存输入数据，用于后面的残差连接
         identity = x
 
+        # 通过第一个卷积层、归一化层和ReLU激活函数
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
 
+        # 通过第二个卷积层、归一化层
         out = self.conv2(out)
         out = self.bn2(out)
 
+        # 如果存在下采样模块，对输入进行下采样
         if self.downsample is not None:
             identity = self.downsample(x)
 
+        # 将下采样的输入与卷积块的输出相加，实现残差连接
         out += identity
+        # 通过ReLU激活函数
         out = self.relu(out)
 
+        # 返回最终的输出
         return out
 
-
+# 定义Bottleneck模块
 class Bottleneck(nn.Module):
     # Bottleneck in torchvision places the stride for downsampling at 3x3 convolution(self.conv2)
     # while original implementation places the stride at the first 1x1 convolution(self.conv1)
@@ -108,54 +127,76 @@ class Bottleneck(nn.Module):
     # This variant is also known as ResNet V1.5 and improves accuracy according to
     # https://ngc.nvidia.com/catalog/model-scripts/nvidia:resnet_50_v1_5_for_pytorch.
 
+    # 设置扩展因子，对于Bottleneck来说，扩展因子为4
     expansion: int = 4
 
     def __init__(
             self,
-            inplanes: int,
-            planes: int,
-            stride: int = 1,
-            downsample: Optional[nn.Module] = None,
-            groups: int = 1,
-            base_width: int = 64,
-            dilation: int = 1,
-            norm_layer: Optional[Callable[..., nn.Module]] = None,
+            inplanes: int,    # 输入通道数
+            planes: int,      # 输出通道数，这里的输出通道数是指中间层的通道数，最终输出通道数是planes * expansion
+            stride: int = 1,  # 步长
+            downsample: Optional[nn.Module] = None, # 下采样模块，用于匹配输入输出的尺寸
+            groups: int = 1,  # 分组数
+            base_width: int = 64, # 基础宽度，用于计算中间层的通道数
+            dilation: int = 1, # 膨胀系数
+            norm_layer: Optional[Callable[..., nn.Module]] = None, # 归一化层，默认为BatchNorm2d
     ) -> None:
         super().__init__()
+        # 如果没有指定归一化层，则使用BatchNorm2d
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
+        # 计算中间层的通道数，根据基础宽度和分组数进行调整
         width = int(planes * (base_width / 64.0)) * groups
-        # Both self.conv2 and self.downsample layers downsample the input when stride != 1
+        # 定义第一个1x1卷积层，用于降维
         self.conv1 = conv1x1(inplanes, width)
+        # 定义第一个归一化层
         self.bn1 = norm_layer(width)
+        # 定义第二个3x3卷积层，步长和膨胀系数会影响输出尺寸
         self.conv2 = conv3x3(width, width, stride, groups, dilation)
+        # 定义第二个归一化层
         self.bn2 = norm_layer(width)
+        # 定义第三个1x1卷积层，用于升维
         self.conv3 = conv1x1(width, planes * self.expansion)
+        # 定义第三个归一化层
         self.bn3 = norm_layer(planes * self.expansion)
+        # 定义ReLU激活函数，inplace=True表示直接修改输入数据，节省内存
         self.relu = nn.ReLU(inplace=True)
+        # 下采样模块，用于匹配输入输出的尺寸
         self.downsample = downsample
+        # 步长，用于后续计算
         self.stride = stride
 
+    # 前向传播过程
     def forward(self, x: Tensor) -> Tensor:
+        # 保存输入数据，用于后面的残差连接
         identity = x
 
+        # 通过第一个卷积层、归一化层和ReLU激活函数
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
 
+        # 通过第二个卷积层、归一化层和ReLU激活函数
         out = self.conv2(out)
         out = self.bn2(out)
         out = self.relu(out)
 
+        # 通过第三个卷积层和归一化层
         out = self.conv3(out)
         out = self.bn3(out)
 
+        # 如果存在下采样模块，对输入进行下采样
+        # 这是为了确保在添加残差之前，输入和输出的维度匹配
         if self.downsample is not None:
             identity = self.downsample(x)
 
+        # 将下采样的输入（或原始输入）与卷积块的输出相加，实现残差连接
         out += identity
+
+        # 最后，通过ReLU激活函数输出结果
         out = self.relu(out)
 
+        # 返回最终的输出
         return out
 
 
